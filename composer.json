@@ -1,19 +1,19 @@
 {
-  "name": "adunsulag/oe-module-custom-skeleton",
-  "description": "OpenEMR Custom Module Skeleton Starter Project",
+  "name": "dennison-williams-stjames/sji_CCDA",
+  "description": "St. James Infirmary's additions to a participants CCDA file",
   "type": "openemr-module",
   "license": "GPL-3.0",
   "authors": [
     {
-      "name": "Stephen Nielson",
-      "email": "stephen@nielson.org",
+      "name": "Dennison WIlliams",
+      "email": "dennison.williams@stjamesinfirmary.org",
       "role": "Developer"
     }
   ],
   "keywords": ["openemr", "openemr-module"],
   "minimum-stability": "stable",
   "autoload": {
-    "psr-4": {"OpenEMR\\Modules\\CustomModuleSkeleton\\": "src/"}
+    "psr-4": {"OpenEMR\\Modules\\SJICCDAModule\\": "src/"}
   },
   "require": {
     "openemr/oe-module-installer-plugin": "^0.1.0",

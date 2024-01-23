@@ -1,1 +1,1 @@
-Custom Skeleton Module v1.0.0
+SJI CCDA Module v1.0.0

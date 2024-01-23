@@ -14,7 +14,7 @@
  * @license   https://github.com/openemr/openemr/blob/master/LICENSE GNU General Public License 3
  */
 
-namespace OpenEMR\Modules\CustomModuleSkeleton;
+namespace OpenEMR\Modules\SJICCDAModule;
 
 /**
  * Note the below use statements are importing classes from the OpenEMR core codebase
@@ -26,6 +26,7 @@ use OpenEMR\Events\Core\TwigEnvironmentEvent;
 use OpenEMR\Events\Globals\GlobalsInitializedEvent;
 use OpenEMR\Events\Main\Tabs\RenderEvent;
 use OpenEMR\Events\RestApiExtend\RestApiResourceServiceEvent;
+use OpenEMR\Events\PatientDocuments\PatientDocumentCreateCCDAEvent;
 use OpenEMR\Events\RestApiExtend\RestApiScopeEvent;
 use OpenEMR\Services\Globals\GlobalSetting;
 use OpenEMR\Menu\MenuEvent;
@@ -36,13 +37,13 @@ use Twig\Error\LoaderError;
 use Twig\Loader\FilesystemLoader;
 
 // we import our own classes here.. although this use statement is unnecessary it forces the autoloader to be tested.
-use OpenEMR\Modules\CustomModuleSkeleton\CustomSkeletonRestController;
+use OpenEMR\Modules\SJICCDAModule\CustomSkeletonRestController;
 
 
 class Bootstrap
 {
     const MODULE_INSTALLATION_PATH = "/interface/modules/custom_modules/";
-    const MODULE_NAME = "oe-module-custom-skeleton";
+    const MODULE_NAME = "sji-ccda";
     /**
      * @var EventDispatcherInterface The object responsible for sending and subscribing to events through the OpenEMR system
      */
@@ -92,14 +93,7 @@ class Bootstrap
 
     public function subscribeToEvents()
     {
-        $this->addGlobalSettings();
-
-        // we only add the rest of our event listeners and configuration if we have been fully setup and configured
-        if ($this->globalsConfig->isConfigured()) {
-            $this->registerMenuItems();
-            $this->registerTemplateEvents();
-            $this->subscribeToApiEvents();
-        }
+        $this->eventDispatcher->addListener(PatientDocumentCreateCCDAEvent::EVENT_NAME_CCDA_CREATE, [$this, 'addSJICCDA']);
     }
 
     /**
@@ -113,6 +107,11 @@ class Bootstrap
     public function addGlobalSettings()
     {
         $this->eventDispatcher->addListener(GlobalsInitializedEvent::EVENT_HANDLE, [$this, 'addGlobalSettingsSection']);
+    }
+
+    public function addSJICCDA(PatientDocumentCreateCCDAEvent $event)
+    {
+	$this->logger->debugLogCaller(__FUNCTION__ .'(), PatientDocumentCreateCCDAEvent received');
     }
 
     public function addGlobalSettingsSection(GlobalsInitializedEvent $event)
