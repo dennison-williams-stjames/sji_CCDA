@@ -12,6 +12,7 @@
   ],
   "keywords": ["openemr", "openemr-module"],
   "minimum-stability": "dev",
+  "prefer-stable" : true,
   "autoload": {
     "psr-4": {"OpenEMR\\Modules\\SJICCDAModule\\": "src/"}
   },
