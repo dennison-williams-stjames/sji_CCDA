@@ -14,7 +14,9 @@
   "minimum-stability": "dev",
   "prefer-stable" : true,
   "autoload": {
-    "psr-4": {"OpenEMR\\Modules\\SJICCDAModule\\": "src/"}
+    "psr-4": {
+      "OpenEMR\\Modules\\SJICCDAModule\\": "src/"
+    }
   },
   "require": {
     "php": ">= 8.1",

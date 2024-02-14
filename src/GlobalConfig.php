@@ -1,20 +1,13 @@
 <?php
 
 /**
- * Bootstrap custom module skeleton.  This file is an example custom module that can be used
- * to create modules that can be utilized inside the OpenEMR system.  It is NOT intended for
- * production and is intended to serve as the barebone requirements you need to get started
- * writing modules that can be installed and used in OpenEMR.
- *
  * @package   OpenEMR
  * @link      http://www.open-emr.org
  *
- * @author    Stephen Nielson <stephen@nielson.org>
- * @copyright Copyright (c) 2021 Stephen Nielson <stephen@nielson.org>
  * @license   https://github.com/openemr/openemr/blob/master/LICENSE GNU General Public License 3
  */
 
-namespace OpenEMR\Modules\CustomModuleSkeleton;
+namespace OpenEMR\Modules\SJICCDAModule;
 
 use OpenEMR\Common\Crypto\CryptoGen;
 use OpenEMR\Services\Globals\GlobalSetting;
@@ -79,44 +72,6 @@ class GlobalConfig
 
     public function getGlobalSettingSectionConfiguration()
     {
-        $settings = [
-            self::CONFIG_OPTION_TEXT => [
-                'title' => 'Skeleton Module Text Option'
-                ,'description' => 'Example global config option with text'
-                ,'type' => GlobalSetting::DATA_TYPE_TEXT
-                ,'default' => ''
-            ]
-            ,self::CONFIG_OPTION_ENCRYPTED => [
-                'title' => 'Skeleton Module Encrypted Option (Encrypted)'
-                ,'description' => 'Example of adding an encrypted global configuration value for your module.  Used for sensitive data'
-                ,'type' => GlobalSetting::DATA_TYPE_ENCRYPTED
-                ,'default' => ''
-            ]
-            ,self::CONFIG_OVERRIDE_TEMPLATES => [
-                'title' => 'Skeleton Module enable overriding twig files'
-                ,'description' => 'Shows example of overriding a twig file'
-                ,'type' => GlobalSetting::DATA_TYPE_BOOL
-                ,'default' => ''
-            ]
-            ,self::CONFIG_ENABLE_MENU => [
-                'title' => 'Skeleton Module add module menu item'
-                ,'description' => 'Shows example of adding a menu item to the system (requires logging out and logging in again)'
-                ,'type' => GlobalSetting::DATA_TYPE_BOOL
-                ,'default' => ''
-            ]
-            ,self::CONFIG_ENABLE_BODY_FOOTER => [
-                'title' => 'Skeleton Module Enable Body Footer example.'
-                ,'description' => 'Shows example of adding a menu item to the system (requires logging out and logging in again)'
-                ,'type' => GlobalSetting::DATA_TYPE_BOOL
-                ,'default' => ''
-            ]
-            ,self::CONFIG_ENABLE_FHIR_API => [
-                'title' => 'Skeleton Module Enable FHIR API Extension example.'
-                ,'description' => 'Shows example of extending the FHIR api with the skeleton module.'
-                ,'type' => GlobalSetting::DATA_TYPE_BOOL
-                ,'default' => ''
-            ]
-        ];
-        return $settings;
+        return [];
     }
 }

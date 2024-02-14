@@ -31,10 +31,15 @@ use OpenEMR\Events\RestApiExtend\RestApiScopeEvent;
 use OpenEMR\Services\Globals\GlobalSetting;
 use OpenEMR\Menu\MenuEvent;
 use OpenEMR\Events\RestApiExtend\RestApiCreateEvent;
+use OpenEMR\Events\Services\ServiceSaveEvent;
 
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Twig\Error\LoaderError;
 use Twig\Loader\FilesystemLoader;
+
+// This is for processing xml
+use DOMDocument;
+use XSLTProcessor;
 
 // we import our own classes here.. although this use statement is unnecessary it forces the autoloader to be tested.
 use OpenEMR\Modules\SJICCDAModule\CustomSkeletonRestController;
@@ -50,19 +55,9 @@ class Bootstrap
     private $eventDispatcher;
 
     /**
-     * @var GlobalConfig Holds our module global configuration values that can be used throughout the module.
-     */
-    private $globalsConfig;
-
-    /**
      * @var string The folder name of the module.  Set dynamically from searching the filesystem.
      */
     private $moduleDirectoryName;
-
-    /**
-     * @var \Twig\Environment The twig rendering environment
-     */
-    private $twig;
 
     /**
      * @var SystemLogger
@@ -77,233 +72,157 @@ class Bootstrap
             $kernel = new Kernel();
         }
 
-        // NOTE: eventually you will be able to pull the twig container directly from the kernel instead of instantiating
-        // it here.
-        $twig = new TwigContainer($this->getTemplatePath(), $kernel);
-        $twigEnv = $twig->getTwig();
-        $this->twig = $twigEnv;
-
         $this->moduleDirectoryName = basename(dirname(__DIR__));
         $this->eventDispatcher = $eventDispatcher;
 
-        // we inject our globals value.
-        $this->globalsConfig = new GlobalConfig($GLOBALS);
-        $this->logger = new SystemLogger();
+	$this->logger = new SystemLogger();
     }
 
     public function subscribeToEvents()
     {
-        $this->eventDispatcher->addListener(PatientDocumentCreateCCDAEvent::EVENT_NAME_CCDA_CREATE, [$this, 'addSJICCDA']);
+        $this->eventDispatcher->addListener( 
+            //PatientDocumentCreateCCDAEvent::EVENT_NAME_CCDA_CREATE, [$this, 'addSJICCDA'], -1
+			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'addSJICCDA']
+		);
     }
 
-    /**
-     * @return GlobalConfig
-     */
-    public function getGlobalConfig()
-    {
-        return $this->globalsConfig;
-    }
-
-    public function addGlobalSettings()
-    {
-        $this->eventDispatcher->addListener(GlobalsInitializedEvent::EVENT_HANDLE, [$this, 'addGlobalSettingsSection']);
-    }
-
+    // Since this is deprioritized above the care coordination handler 
+    // will have already requested the CCDA file from the ccdaservice
+    // and written it to disk.  We should be able to pick it up of 
+    // the filesystem and modify it with our custom data then write
+    // it back to disk
     public function addSJICCDA(PatientDocumentCreateCCDAEvent $event)
     {
-	$this->logger->debugLogCaller(__FUNCTION__ .'(), PatientDocumentCreateCCDAEvent received');
-    }
+        global $srcdir;
+	    $this->logger->errorLogCaller(__FUNCTION__); 
+		return;
 
-    public function addGlobalSettingsSection(GlobalsInitializedEvent $event)
-    {
-        global $GLOBALS;
+	    //$this->logger->errorLogCaller('PatientDocumentCreateCCDAEvent received');
+	    //$this->logger->errorLogCaller(print_r($event->getSections(), 1));
+	    //$this->logger->errorLogCaller(print_r($event->getFileUrl(), 1));
+	    //$this->logger->errorLogCaller(print_r($event->getCcdaId(), 1));
+	    //$this->logger->errorLogCaller(print_r($event->getRecipient(), 1));
+	    //$this->logger->errorLogCaller(print_r($event->getFormat(), 1));
+	    //$this->logger->errorLogCaller(print_r($event->getComponents(), 1));
+	    $this->logger->errorLogCaller(print_r($event->getContent(), 1)); exit;
+	    //$this->logger->errorLogCaller(print_r($event->getPid(), 1)); exit;
+		//$this->logger->errorLogCaller(print_r(get_class_methods($event), 1)); exit;
+		//$this->logger->errorLogCaller(print_r($GLOBALS, 1)); exit;
+		//$this->logger->errorLogCaller(print_r(array_keys(get_defined_vars()), 1)); exit;
+		//$this->logger->errorLogCaller(print_r($srcdir, 1)); exit;
+		require_once("$srcdir/patient.inc.php");
+		$pid = $event->getPid();
+		$data = getPatientData($pid);
+		//print_r(array_keys($data));
+		$gender = $data['gender'];
+		$gender_identity = $data['gender_identity'];
+		$so = $data['sexual_orientation'];
+		$sex = $data['sex'];
+		$dob = $data['DOB'];
+		//$this->logger->errorLogCaller($so);
+		//$this->logger->errorLogCaller($gender);
+		//$this->logger->errorLogCaller($gender_identity);
+		//$this->logger->errorLogCaller(print_r($data, 1)); exit;
 
-        $service = $event->getGlobalsService();
-        $section = xlt("Skeleton Module");
-        $service->createSection($section, 'Portal');
-
-        $settings = $this->globalsConfig->getGlobalSettingSectionConfiguration();
-
-        foreach ($settings as $key => $config) {
-            $value = $GLOBALS[$key] ?? $config['default'];
-            $service->appendToSection(
-                $section,
-                $key,
-                new GlobalSetting(
-                    xlt($config['title']),
-                    $config['type'],
-                    $value,
-                    xlt($config['description']),
-                    true
-                )
-            );
-        }
-    }
-
-    /**
-     * We tie into any events dealing with the templates / page rendering of the system here
-     */
-    public function registerTemplateEvents()
-    {
-        if ($this->getGlobalConfig()->getGlobalSetting(GlobalConfig::CONFIG_ENABLE_BODY_FOOTER)) {
-            $this->eventDispatcher->addListener(RenderEvent::EVENT_BODY_RENDER_POST, [$this, 'renderMainBodyScripts']);
-        }
-        if ($this->getGlobalConfig()->getGlobalSetting(GlobalConfig::CONFIG_OVERRIDE_TEMPLATES)) {
-            $this->eventDispatcher->addListener(TwigEnvironmentEvent::EVENT_CREATED, [$this, 'addTemplateOverrideLoader']);
-        }
-    }
-
-    /**
-     * Add our javascript and css file for the module to the main tabs page of the system
-     * @param RenderEvent $event
-     */
-    public function renderMainBodyScripts(RenderEvent $event)
-    {
-        ?>
-        <link rel="stylesheet" href="<?php echo $this->getAssetPath();?>css/skeleton-module.css">
-        <script src="<?php echo $this->getAssetPath();?>js/skeleton-module.js"></script>
-        <?php
-    }
-
-    /**
-     * @param TwigEnvironmentEvent $event
-     */
-    public function addTemplateOverrideLoader(TwigEnvironmentEvent $event)
-    {
-        try {
-            $twig = $event->getTwigEnvironment();
-            if ($twig === $this->twig) {
-                // we do nothing if its our own twig environment instantiated that we already setup
-                return;
-            }
-            // we make sure we can override our file system directory here.
-            $loader = $twig->getLoader();
-            if ($loader instanceof FilesystemLoader) {
-                $loader->prependPath($this->getTemplatePath());
-            }
-        } catch (LoaderError $error) {
-            $this->logger->errorLogCaller("Failed to create template loader", ['innerMessage' => $error->getMessage(), 'trace' => $error->getTraceAsString()]);
-        }
-    }
-
-    public function registerMenuItems()
-    {
-        if ($this->getGlobalConfig()->getGlobalSetting(GlobalConfig::CONFIG_ENABLE_MENU)) {
-            /**
-             * @var EventDispatcherInterface $eventDispatcher
-             * @var array $module
-             * @global                       $eventDispatcher @see ModulesApplication::loadCustomModule
-             * @global                       $module @see ModulesApplication::loadCustomModule
-             */
-            $this->eventDispatcher->addListener(MenuEvent::MENU_UPDATE, [$this, 'addCustomModuleMenuItem']);
-        }
-    }
-
-    public function addCustomModuleMenuItem(MenuEvent $event)
-    {
-        $menu = $event->getMenu();
-
-        $menuItem = new \stdClass();
-        $menuItem->requirement = 0;
-        $menuItem->target = 'mod';
-        $menuItem->menu_id = 'mod0';
-        $menuItem->label = xlt("Custom Module Skeleton");
-        // TODO: pull the install location into a constant into the codebase so if OpenEMR changes this location it
-        // doesn't break any modules.
-        $menuItem->url = "/interface/modules/custom_modules/oe-module-custom-skeleton/public/sample-index.php";
-        $menuItem->children = [];
-
-        /**
-         * This defines the Access Control List properties that are required to use this module.
-         * Several examples are provided
-         */
-        $menuItem->acl_req = [];
-
-        /**
-         * If you would like to restrict this menu to only logged in users who have access to see all user data
-         */
-        //$menuItem->acl_req = ["admin", "users"];
-
-        /**
-         * If you would like to restrict this menu to logged in users who can access patient demographic information
-         */
-        //$menuItem->acl_req = ["users", "demo"];
-
-
-        /**
-         * This menu flag takes a boolean property defined in the $GLOBALS array that OpenEMR populates.
-         * It allows a menu item to display if the property is true, and be hidden if the property is false
-         */
-        //$menuItem->global_req = ["custom_skeleton_module_enable"];
-
-        /**
-         * If you want your menu item to allows be shown then leave this property blank.
-         */
-        $menuItem->global_req = [];
-
-        foreach ($menu as $item) {
-            if ($item->menu_id == 'modimg') {
-                $item->children[] = $menuItem;
-                break;
-            }
+		// should only be one
+        $docs = \Document::getDocumentsForForeignReferenceId('ccda', $event->getCcdaId());
+        if (!empty($docs)) {
+            $doc = $docs[0];
+        } else {
+            throw new \Exception("Document did not exist for ccda table with id " . $createdEvent->getCcdaId());
         }
 
-        $event->setMenu($menu);
+	    //$this->logger->errorLogCaller(print_r($doc, 1));
+	    //$this->logger->errorLogCaller(print_r(get_class_methods($doc), 1));
+	    //$this->logger->errorLogCaller(print_r($doc->toString(), 1));
+	    //$this->logger->errorLogCaller(print_r($doc->get_data(), 1));
+	    //$this->logger->errorLogCaller(print_r($doc->get_data(), 1));
+		$sXML = $doc->get_data();
+		$xmlDom = new DOMDocument();
+		$xmlDom->loadXML($sXML);
 
-        return $event;
-    }
+		foreach($xmlDom->getElementsByTagName('component') as $component) {
+		foreach($component->getElementsByTagName('section') as $section) {
+		foreach($section->getElementsByTagName('title') as $title) {
+			// $title is a DOMElement Object
+			// We know that the Social History section we receive is 
+			// empty but more secure programming would test this
+			if ($title->nodeValue === 'Social History') {
+				//$this->logger->errorLogCaller(print_r(get_class_methods($title), 1));
+				//$this->logger->errorLogCaller(print_r($title, 1));
+				//$this->logger->errorLogCaller(print_r($title->nodeValue, 1));
+				$this->logger->errorLogCaller(print_r($xmlDom->saveXML($component), 1));
+				$tr = $xmlDom->createElement('TR');
+				$tr->appendChild('TH', 'Social History');
+				$tr->appendChild('TH', 'Observation');
+				$tr->appendChild('TH', 'Date');
+				$thead = $xmlDom->createElement('THEAD');
+				$thead->apendChild($tr);
+				$table = $xmlDom->createElement('TABLE');
+				$table->appendChild($thead);
 
-    public function subscribeToApiEvents()
-    {
-        if ($this->getGlobalConfig()->getGlobalSetting(GlobalConfig::CONFIG_ENABLE_FHIR_API)) {
-            $this->eventDispatcher->addListener(RestApiCreateEvent::EVENT_HANDLE, [$this, 'addCustomSkeletonApi']);
-            $this->eventDispatcher->addListener(RestApiScopeEvent::EVENT_TYPE_GET_SUPPORTED_SCOPES, [$this, 'addApiScope']);
-            $this->eventDispatcher->addListener(RestApiResourceServiceEvent::EVENT_HANDLE, [$this, 'addMetadataConformance']);
+				// Insert sex assigned at birth
+				$tbody = $xmlDom->createElement('TBODY');
+				$tr = $xmlDom->createElement('TR');
+				$tr->appendChild('TD', 'Sex');
+				$tr->appendChild('TD', $sex);
+				$tr->appendChild('TD', $dob);
+				$tbody->appedChild($tr);
+
+				$text = $xmlDom->createElement('text');
+				$text->appendChild($table);
+
+				// TODO: Insert sexual orientation
+				// TODO: Insert gender identity
+				//
+
+				$entry = $xmlDom->createElement('ENTRY');
+				$observation = $xmlDom->createElement('OBSERVATION');
+				$entry->setAttribute('typeCode', 'DRIV');
+				$observation->setAttribute('classCode', 'OBS');
+				$observation->setAttribute('moodCode', 'EVN');
+				/*
+				<templateId root="2.16.840.1.113883.10.20.22.4.200"
+						extension="2016-06-01"/>
+					<code code="76689-9" codeSystem="2.16.840.1.113883.6.1"
+						displayName="Sex Assigned At Birth"/>
+					<statusCode code="completed"/>
+					<!-- effectiveTime if present should match birthTime -->
+					<effectiveTime value="19750501"/>
+					<value xsi:type="CD" codeSystem="2.16.840.1.113883.5.1"
+						codeSystemName="AdministrativeGender" code="F" displayName="Female">
+						<originalText>
+							<reference value="#BSex_value"/>
+						</originalText>
+					</value>
+				*/
+				exit;
+			}
+			//exit;
+		} // title
+		} // section
+		$section->appendChild($text);
+		} // component
+		
+		// This is an example of how we can embed ourselves in the xml
+		/*
+		if (substr_count($content, '</ClinicalDocument>') == 2) {
+            $d = explode('</ClinicalDocument>', $content);
+            $content = $d[0] . '</ClinicalDocument>';
+            $unstructured = $d[1] . '</ClinicalDocument>';
         }
-    }
+		*/
 
-    public function addCustomSkeletonApi(RestApiCreateEvent $event)
-    {
-        $apiController = new CustomSkeletonRestController();
+		// TODO: sex assigned at birth
+		// TODO: sexual preference
+		// TODO: gender identity
+		// TODO: all visits and encounters
+		// TODO: all groups
 
-        /**
-         * To see the route definitions @see https://github.com/openemr/openemr/blob/master/_rest_routes.inc.php
-         */
-        $event->addToFHIRRouteMap('GET /fhir/CustomSkeletonResource', [$apiController, 'listResources']);
-        $event->addToFHIRRouteMap('GET /fhir/CustomSkeletonResource/:fhirId', [$apiController, 'getOneResource']);
+		// TODO: write the document back to disk
 
-        /**
-         * Events must ALWAYS be returned
-         */
-        return $event;
-    }
-
-    /**
-     * Adds the webhook api scopes to the oauth2 scope validation events for the standard api.  This allows the webhook
-     * to be fired.
-     * @param RestApiScopeEvent $event
-     * @return RestApiScopeEvent
-     */
-    public function addApiScope(RestApiScopeEvent $event)
-    {
-        if ($event->getApiType() == RestApiScopeEvent::API_TYPE_FHIR) {
-            $scopes = $event->getScopes();
-            $scopes[] = 'user/CustomSkeletonResource.read';
-            $scopes[] = 'patient/CustomSkeletonResource.read';
-            // only add system scopes if they are actually enabled
-            if (\RestConfig::areSystemScopesEnabled())
-            {
-                $scopes[] = 'system/CustomSkeletonResource.read';
-            }
-            $event->setScopes($scopes);
-        }
-        return $event;
-    }
-
-    public function addMetadataConformance(RestApiResourceServiceEvent $event)
-    {
-        $event->setServiceClass(CustomSkeletonFHIRResourceService::class);
-        return $event;
+	    exit;
+	    return $event;
     }
 
     private function getPublicPath()
