@@ -75,14 +75,14 @@ class Bootstrap
         $this->moduleDirectoryName = basename(dirname(__DIR__));
         $this->eventDispatcher = $eventDispatcher;
 
-	$this->logger = new SystemLogger();
+		$this->logger = new SystemLogger();
     }
 
     public function subscribeToEvents()
     {
         $this->eventDispatcher->addListener( 
             //PatientDocumentCreateCCDAEvent::EVENT_NAME_CCDA_CREATE, [$this, 'addSJICCDA'], -1
-			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'addSJICCDA']
+			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'addTextSexAssignedAtBirth']
 		);
     }
 
@@ -91,117 +91,80 @@ class Bootstrap
     // and written it to disk.  We should be able to pick it up of 
     // the filesystem and modify it with our custom data then write
     // it back to disk
-    public function addSJICCDA(PatientDocumentCreateCCDAEvent $event)
+    public function addTextSexAssignedAtBirth(ServiceSaveEvent $event)
     {
+		//$this->logger->debug(__FUNCTION__);
         global $srcdir;
-	    $this->logger->errorLogCaller(__FUNCTION__); 
-		return;
+		$CCDA = $event->getSaveData()['CCDA'];
+		$pid = $event->getSaveData()['pid'];
 
-	    //$this->logger->errorLogCaller('PatientDocumentCreateCCDAEvent received');
-	    //$this->logger->errorLogCaller(print_r($event->getSections(), 1));
-	    //$this->logger->errorLogCaller(print_r($event->getFileUrl(), 1));
-	    //$this->logger->errorLogCaller(print_r($event->getCcdaId(), 1));
-	    //$this->logger->errorLogCaller(print_r($event->getRecipient(), 1));
-	    //$this->logger->errorLogCaller(print_r($event->getFormat(), 1));
-	    //$this->logger->errorLogCaller(print_r($event->getComponents(), 1));
-	    $this->logger->errorLogCaller(print_r($event->getContent(), 1)); exit;
-	    //$this->logger->errorLogCaller(print_r($event->getPid(), 1)); exit;
-		//$this->logger->errorLogCaller(print_r(get_class_methods($event), 1)); exit;
-		//$this->logger->errorLogCaller(print_r($GLOBALS, 1)); exit;
-		//$this->logger->errorLogCaller(print_r(array_keys(get_defined_vars()), 1)); exit;
-		//$this->logger->errorLogCaller(print_r($srcdir, 1)); exit;
 		require_once("$srcdir/patient.inc.php");
-		$pid = $event->getPid();
 		$data = getPatientData($pid);
-		//print_r(array_keys($data));
 		$gender = $data['gender'];
 		$gender_identity = $data['gender_identity'];
 		$so = $data['sexual_orientation'];
 		$sex = $data['sex'];
 		$dob = $data['DOB'];
-		//$this->logger->errorLogCaller($so);
-		//$this->logger->errorLogCaller($gender);
-		//$this->logger->errorLogCaller($gender_identity);
-		//$this->logger->errorLogCaller(print_r($data, 1)); exit;
-
-		// should only be one
-        $docs = \Document::getDocumentsForForeignReferenceId('ccda', $event->getCcdaId());
-        if (!empty($docs)) {
-            $doc = $docs[0];
-        } else {
-            throw new \Exception("Document did not exist for ccda table with id " . $createdEvent->getCcdaId());
-        }
-
-	    //$this->logger->errorLogCaller(print_r($doc, 1));
-	    //$this->logger->errorLogCaller(print_r(get_class_methods($doc), 1));
-	    //$this->logger->errorLogCaller(print_r($doc->toString(), 1));
-	    //$this->logger->errorLogCaller(print_r($doc->get_data(), 1));
-	    //$this->logger->errorLogCaller(print_r($doc->get_data(), 1));
-		$sXML = $doc->get_data();
+		$name_string = $data['fname'] .' '. $data['lname'] ." ($pid) $dob";
 		$xmlDom = new DOMDocument();
-		$xmlDom->loadXML($sXML);
+		$xmlDom->loadXML($CCDA);
 
 		foreach($xmlDom->getElementsByTagName('component') as $component) {
 		foreach($component->getElementsByTagName('section') as $section) {
 		foreach($section->getElementsByTagName('title') as $title) {
 			// $title is a DOMElement Object
-			// We know that the Social History section we receive is 
-			// empty but more secure programming would test this
+			// We expect the Social History section to already be built
 			if ($title->nodeValue === 'Social History') {
-				//$this->logger->errorLogCaller(print_r(get_class_methods($title), 1));
-				//$this->logger->errorLogCaller(print_r($title, 1));
-				//$this->logger->errorLogCaller(print_r($title->nodeValue, 1));
-				$this->logger->errorLogCaller(print_r($xmlDom->saveXML($component), 1));
-				$tr = $xmlDom->createElement('TR');
-				$tr->appendChild('TH', 'Social History');
-				$tr->appendChild('TH', 'Observation');
-				$tr->appendChild('TH', 'Date');
-				$thead = $xmlDom->createElement('THEAD');
-				$thead->apendChild($tr);
-				$table = $xmlDom->createElement('TABLE');
-				$table->appendChild($thead);
+				$elements = $section->getElementsByTagName('text');
+				$text = $elements->item(0);
+
+				$elements = $text->getElementsByTagName('tbody');
+				if (!$elements->count()) {
+					$this->logger->warning('Social History not built for: '.$name_string);
+					return $event;
+				}
+
+				$tbody = $elements->item(0);
+				//$this->logger->errorLogCaller(print_r(get_class_methods($tbody), 1)); return $event;
+
+				//determine the most recent id
+				$ct = 1;
+				$socialId = 'social'.$ct;
+				foreach($tbody->getElementsByTagName('td') as $td) {
+					$value = $td->getAttribute('ID');
+					if ($value) {
+						//$this->logger->errorLogCaller('ID: '. print_r($value, 1));
+						$ct = $ct + 1;
+						$socialId = 'social'.$ct;
+					}
+				} 
+				//$this->logger->errorLogCaller('Social ID: '. print_r($socialId, 1));
 
 				// Insert sex assigned at birth
-				$tbody = $xmlDom->createElement('TBODY');
 				$tr = $xmlDom->createElement('TR');
-				$tr->appendChild('TD', 'Sex');
-				$tr->appendChild('TD', $sex);
-				$tr->appendChild('TD', $dob);
-				$tbody->appedChild($tr);
+				$td = $xmlDom->createElement('TD');
+				$td->setAttribute('ID', $socialId);
+				$td->nodeValue = 'Birth Sex';
+				$tr->appendChild($td);
 
-				$text = $xmlDom->createElement('text');
-				$text->appendChild($table);
+				$td = $xmlDom->createElement('TD');
+				$td->nodeValue = $sex;
+				$tr->appendChild($td);
+
+				$td = $xmlDom->createElement('TD');
+				$td->nodeValue = $dob;
+				$tr->appendChild($td);
+
+				$tbody->appendChild($tr);
+				//$this->logger->errorLogCaller('TBODY: '. print_r($xmlDom->saveXML($tbody), 1));
 
 				// TODO: Insert sexual orientation
 				// TODO: Insert gender identity
-				//
-
-				$entry = $xmlDom->createElement('ENTRY');
-				$observation = $xmlDom->createElement('OBSERVATION');
-				$entry->setAttribute('typeCode', 'DRIV');
-				$observation->setAttribute('classCode', 'OBS');
-				$observation->setAttribute('moodCode', 'EVN');
-				/*
-				<templateId root="2.16.840.1.113883.10.20.22.4.200"
-						extension="2016-06-01"/>
-					<code code="76689-9" codeSystem="2.16.840.1.113883.6.1"
-						displayName="Sex Assigned At Birth"/>
-					<statusCode code="completed"/>
-					<!-- effectiveTime if present should match birthTime -->
-					<effectiveTime value="19750501"/>
-					<value xsi:type="CD" codeSystem="2.16.840.1.113883.5.1"
-						codeSystemName="AdministrativeGender" code="F" displayName="Female">
-						<originalText>
-							<reference value="#BSex_value"/>
-						</originalText>
-					</value>
-				*/
-				exit;
+				break 3;
 			}
 			//exit;
 		} // title
 		} // section
-		$section->appendChild($text);
 		} // component
 		
 		// This is an example of how we can embed ourselves in the xml
@@ -212,16 +175,14 @@ class Bootstrap
             $unstructured = $d[1] . '</ClinicalDocument>';
         }
 		*/
+		$save = Array('pid' => $pid, 'CCDA' => $xmlDom->saveXML());
+		$event->setSaveData($save);
 
-		// TODO: sex assigned at birth
 		// TODO: sexual preference
 		// TODO: gender identity
 		// TODO: all visits and encounters
 		// TODO: all groups
 
-		// TODO: write the document back to disk
-
-	    exit;
 	    return $event;
     }
 
