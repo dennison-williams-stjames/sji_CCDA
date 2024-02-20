@@ -1,15 +1,13 @@
 <?php
 
 /**
- * Bootstrap custom module skeleton.  This file is an example custom module that can be used
- * to create modules that can be utilized inside the OpenEMR system.  It is NOT intended for
- * production and is intended to serve as the barebone requirements you need to get started
- * writing modules that can be installed and used in OpenEMR.
+ * This module extends the C-CDA subsystem to include data specific to 
+ * St. James Infirmary
  *
  * @package   OpenEMR
  * @link      http://www.open-emr.org
  *
- * @author    Stephen Nielson <stephen@nielson.org>
+ * @author    Dennison Williams <dennison@dennisonwilliams.com>
  * @copyright Copyright (c) 2021 Stephen Nielson <stephen@nielson.org>
  * @license   https://github.com/openemr/openemr/blob/master/LICENSE GNU General Public License 3
  */
@@ -87,7 +85,45 @@ class Bootstrap
         $this->eventDispatcher->addListener( 
 			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'addTextSexAssignedAtBirth']
 		);
+
+        $this->eventDispatcher->addListener( 
+			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'addSJIEncounters']
+		);
+
+/*
+        $this->eventDispatcher->addListener( 
+			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'addGenderIdentity']
+		);
+
+        $this->eventDispatcher->addListener( 
+			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'addScannedDocuments']
+		);
+*/
     }
+
+	// None of the custom forms are getting recorded as encounters in the C-CDA
+    // we will have to add them here
+    public function addSJIEncounters(ServiceSaveEvent $event)
+    {
+		$this->logger->debug(__FUNCTION__);
+		return $event;
+	}
+
+	// https://cdasearch.hl7.org/sections/Unstructured
+	/*
+	 * If the PDF is greater the 5M, let's add it as a reference
+	 * https://cdasearch.hl7.org/examples/view/Unstructured/CDA%20reference%20PDF
+	 *
+	 * Otherwise liet's have it be embedded
+	 * https://cdasearch.hl7.org/examples/view/Unstructured/CDA%20with%20Embedded%20PDF%201
+	 *
+	 * There may be functionality in the ccdaservice that already handles this
+	*/
+    public function addScannedDocuments(ServiceSaveEvent $event)
+    {
+		$this->logger->debug(__FUNCTION__);
+		return $event;
+	}
 
     public function addSexualOrientation(ServiceSaveEvent $event)
     {
@@ -105,13 +141,34 @@ class Bootstrap
 			// We expect the Social History section to already be built
 			if ($title->nodeValue === 'Social History') {
 				// Insert the text section for Sexual orientation
+				$stext = $this->getSexualOrientationText($pid);
+				if (!strlen($stext)) {
+					// there is no sexual orientation to report on
+					break 3;
+				}
+				$fragment = $xmlDom->createDocumentFragment();
+				$fragment->appendXml($stext);
+
+				$text = $section->getElementsByTagName('text')[0];
+				if (!$text) {
+					$this->logger->errorLogCaller(print_r($xmlDom->saveXML($section), 1));
+					break 3;
+				}
+
+				$table = $text->getElementsByTagName('table')[0];
+				if (!$table) {
+					$this->logger->errorLogCaller(print_r($xmlDom->saveXML($text), 1));
+					break 3;
+				}
+
+				//$this->logger->errorLogCaller(print_r(get_class_methods($table), 1));
+				$table->appendChild($fragment);
 
 				// Insert the entry section for secual orientation
-				$entry_text = $this->getSexualOrientationEntry($pid);
+				$entry = $this->getSexualOrientationEntry($pid);
 				$fragment = $xmlDom->createDocumentFragment();
-				$fragment->appendXml($entry_text);
+				$fragment->appendXml($entry);
 				$section->appendChild($fragment);
-				//$this->logger->errorLogCaller($entry_text);
 				break 3;
 			}
 		}
@@ -234,7 +291,48 @@ class Bootstrap
 		return $result;
 	}
 
+	/*
+	*/
 	private function getSexualOrientationText($pid) {
+		$pd = array_merge(
+			$this->getPatientData($pid),
+			$this->getSexualOrientation($pid)
+		);
+
+		// If there is no sexual identity we do not need to build a structure
+        if (!array_key_exists('sexual_identity', $pd)) {
+		    return '';
+		}	
+		$so = $pd['sexual_identity'];
+
+		$effectiveDate = $pd['date'];
+		$effectiveDate = strtotime($effectiveDate);
+		$effectiveDate = getDate($effectiveDate);
+		$effectiveDate = $effectiveDate['year'] .'/'.
+			str_pad($effectiveDate['mon'], 2, 0, STR_PAD_LEFT) .'/'. 
+			str_pad($effectiveDate['mday'], 2, 0, STR_PAD_LEFT);
+
+		$dob = $pd['DOB'];
+		$name_string = $pd['fname'] .' '. $pd['lname'] ." ($pid) $dob";
+		$sexualities = $this->getHL7SexualOrientation($so);
+
+	    $return = '<tbody styleCode="xRowGroup">
+			<tr ID="_a1305452-cddd-4654-980f-bba6745588c8">
+				<td>
+					<content ID="_3b8a5051-3968-4cfe-ab70-8b69f84bd378">Sexual orientation</content>
+				</td>
+				<td>
+					<content ID="_12d30bb3-f589-4d3b-a011-4b463aafa093">'.
+					$sexualities[0]
+                    .'</content>
+				</td>
+				<td>
+					<content>'. $effectiveDate .' - </content>
+				</td>
+			</tr>
+		</tbody>';
+
+		return $return;
 	}
 
 	private function getPatientData($pid)
@@ -273,7 +371,77 @@ class Bootstrap
         }
 
         return null;
-    }
+	}
+
+	/*
+	<text>
+		<table>
+			<thead>
+				<tr>
+					<th>Social History</th>
+					<th>Observation</th>
+					<th>Date</th>
+				</tr>
+			</thead>
+			<tbody styleCode="xRowGroup">
+				<tr ID="_6e185602-f807-40c6-8003-41c589ae62af">
+					<td>
+						<content ID="_4503c511-8e06-41a0-8f6b-3f5d23b131e2">Gender identity</content>
+					</td>
+					<td>
+						<content ID="_71d1b8e1-b3dd-483f-80f3-49656e518994">Female-to-male transsexual</content>						
+					</td>
+					<td/>
+					<content>2001 - </content>
+					<td/>
+				</tr>
+			</tbody>
+		</table>
+	</text>
+	<entry>
+			<observation classCode="OBS" moodCode="EVN">
+				<templateId root="2.16.840.1.113883.10.20.22.4.38" extension="2015-08-01"/>
+				<templateId root="2.16.840.1.113883.10.20.22.4.38"/>
+				<id root="2.16.840.1.113883.19" extension="123456789"/>
+				<!-- Per the C-CDA 2.1 IG - (CONF:1198-8558) - social history type value set is a SHOULD - therefore this value is not in the value set however, it is allowed-->
+				<code code="76691-5" codeSystem="2.16.840.1.113883.6.1" displayName="Gender identity" codeSystemName="LOINC">
+					<originalText>
+						<reference value="#_4503c511-8e06-41a0-8f6b-3f5d23b131e2"/>
+					</originalText>
+				</code>
+				<text>
+					<reference value="#_6e185602-f807-40c6-8003-41c589ae62af"/>
+				</text>
+				<statusCode code="completed"/>
+				<!-- interval start with no end to indicate from 2001 -->
+				<effectiveTime xsi:type="IVL_TS">
+					<low value="2001"/> 
+				</effectiveTime>
+				<!-- Selected from this value set - https://phinvads.cdc.gov/vads/ViewValueSet.action?id=B0155EA6-45BB-E711-ACE2-0017A477041A -->
+				<value xsi:type="CD" code="407377005" codeSystem="2.16.840.1.113883.6.96" displayName="Female-to-male transsexual" codeSystemName="SNOMED CT">
+					<originalText>
+						<reference value="#_71d1b8e1-b3dd-483f-80f3-49656e518994"/>
+					</originalText>
+				</value>
+				<author>
+					<templateId root="2.16.840.1.113883.10.20.22.4.119"/>
+					<time value="201406061032-0500"/>
+					<assignedAuthor>
+						<id extension="99999999" root="2.16.840.1.113883.4.6"/>
+						<code code="200000000X" codeSystem="2.16.840.1.113883.6.101" displayName="Allopathic and Osteopathic Physicians" codeSystemName="Healthcare Provider Taxonomy (HIPAA)"/>
+						<telecom use="WP" value="tel:+1(555)555-1002"/>
+						<assignedPerson>
+							<name>
+								<given>Henry</given>
+								<family>Seven</family>
+							</name>
+						</assignedPerson>
+					</assignedAuthor>
+				</author>
+			</observation>
+		</entry>	
+	 
+	 */
 
 
 	private function getGenderIdentityEntry($pid) {
@@ -287,10 +455,10 @@ class Bootstrap
 		//$this->logger->errorLogCaller(print_r(getPatientData($pid), 1));
 		//$this->logger->errorLogCaller(print_r($this->getSexualOrientation($pid), 1));
 		//$this->logger->errorLogCaller(print_r($pd, 1));
-		$so = $pd['sexual_identity'];
+		$gender = $pd['gender'];
 
 		// If there is no sexual identity we do not need to build a structure
-		if (!$so) {
+		if (!$gender) {
 			return '';
 		}
 
@@ -302,49 +470,44 @@ class Bootstrap
 		$this->logger->errorLogCaller($date);
 		//$this->logger->errorLogCaller(print_r($so, 1));
 
-		// Convert the sexual orientation we received
-		// LOINC sexual orientation https://loinc.org/LL3323-4
-		$sexualities = array(
-		    "Lesbian/Dyke/Gay Female" =>
-				array("Gay or lesbian","38628009"), 
-			"Straight/Heterosexual" => 
-				array("Straight (not gay or lesbian)","20430005"), 
-			"Bisexual" => 
-				array("Bisexual","20430005"), 
-			"Other - unspecified" => 
-				array("other","OTH"), 
-			"Gay Male" => "",
-				array("Gay or lesbian","38628009"), 
-			"Queer" => 
-				array("other","OTH"), 
-			"Do Not Know" => "",
-				array("unknown","UKN"), 
-			"Other (specify)" => 
-				array("other","OTH"), 
-			"Refused" => 
-				array("unknown","UKN"), 
-			"Questioning" => 
-				array("other","OTH"), 
-			"Trans" => 
-				array("unknown","UKN"), 
-			"Same-Gender Loving" => 
-				array("Gay or lesbian","38628009"), 
-			"Declined to state" => 
-				array("unknown","UKN"), 
-			"do not identify" => 
-				array("unknown","UKN"), 
-			"Hetero" => 
-				array("Straight (not gay or lesbian)","20430005"), 
+		// Convert the gender we received
+		// https://phinvads.cdc.gov/vads/ViewValueSet.action?id=B0155EA6-45BB-E711-ACE2-0017A477041A
+		// Not all of these are LOINC!
+		$genders = array(
 			"NULL" => "",
 				array("unknown","UKN"), 
-			"Heterosexual" => 
-				array("Straight (not gay or lesbian)","20430005"), 
-			"Gay" => 
-				array("Gay or lesbian","38628009"), 
-			"Pansexual" => 
-				array("other","OTH"), 
-			"Lesbian" => 
-				array("Gay or lesbian","38628009"), 
+			"Cisgender Male" => 
+				// PHIN VS (CDC Local Coding System)
+				array("Cisgender/Not transgender (finding)","PHC1490"), 
+			"Cisgender Female" => 
+				// PHIN VS (CDC Local Coding System)
+				array("Cisgender/Not transgender (finding)","PHC1490"), 
+			"Trans Male" => 
+				// SNOMED-CT
+				array("Female-to-male transsexual","407377005"), 
+			"Unknown" => 
+				// NullFlavor
+				array("unknown","UKN"), 
+			"Transgender Female" => 
+				// SNOMED-CT
+				array("Male-to-female transsexual","407376001"),
+			"NB AFAB" => 
+				// SNOMED-CT
+				array("Transgender unspecified","12271241000119109"),
+			"NB AMAB" => 
+				// SNOMED-CT
+				array("Transgender unspecified","12271241000119109"),
+			"" => 
+				array("unknown","UKN"), 
+			"Transgender Male" => 
+				// SNOMED-CT
+				array("Female-to-male transsexual","407377005"), 
+			"Intersex Female" => 
+				// SNOMED-CT
+				array("Transgender unspecified","12271241000119109"),
+			"Other Male" => 
+				// SNOMED-CT
+				array("Transgender unspecified","12271241000119109")
 		);
 
 		//$this->logger->errorLogCaller(print_r($so, 1));
@@ -377,29 +540,8 @@ class Bootstrap
 */
 		return $entry;
 	}
-	private function getSexualOrientationEntry($pid) {
-        global $srcdir;
-		//$this->logger->errorLogCaller(__FUNCTION__); return;
-		$pd = array_merge(
-			$this->getPatientData($pid),
-	        $this->getSexualOrientation($pid)
-		);
-		//$this->logger->errorLogCaller($pid);
-		//$this->logger->errorLogCaller(print_r(getPatientData($pid), 1));
-		//$this->logger->errorLogCaller(print_r($this->getSexualOrientation($pid), 1));
-		//$this->logger->errorLogCaller(print_r($pd, 1));
-		$so = $pd['sexual_identity'];
 
-		// If there is no sexual identity we do not need to build a structure
-		if (!$so) {
-			return '';
-		}
-
-		$dob = $pd['DOB'];
-		$name_string = $pd['fname'] .' '. $pd['lname'] ." ($pid) $dob";
-		//$this->logger->errorLogCaller($name_string);
-		//$this->logger->errorLogCaller(print_r($so, 1));
-
+	private function getHL7SexualOrientation($orientation) {
 		// Convert the sexual orientation we received
 		// LOINC sexual orientation https://loinc.org/LL3323-4
 		$sexualities = array(
@@ -445,9 +587,51 @@ class Bootstrap
 				array("Gay or lesbian","38628009"), 
 		);
 
+		if(array_key_exists($orientation, $sexualities)) {
+			return $sexualities[$orientation];
+		} 
+
+		return array("unknown","UKN");
+	}
+
+	private function getSexualOrientationEntry($pid) {
+		//$this->logger->errorLogCaller(__FUNCTION__); return;
+		$pd = array_merge(
+			$this->getPatientData($pid),
+			$this->getSexualOrientation($pid)
+		);
+		//$this->logger->errorLogCaller($pid);
+		//$this->logger->errorLogCaller(print_r(getPatientData($pid), 1));
+		//$this->logger->errorLogCaller(print_r($this->getSexualOrientation($pid), 1));
+		//$this->logger->errorLogCaller(print_r($pd, 1));
+		$so = $pd['sexual_identity'];
+		$effectiveDate = $pd['date'];
+		$effectiveDate = strtotime($effectiveDate);
+		$effectiveDate = getDate($effectiveDate);
+		$effectiveDate = $effectiveDate['year'] . 
+			str_pad($effectiveDate['mon'], 2, 0, STR_PAD_LEFT) . 
+			str_pad($effectiveDate['mday'], 2, 0, STR_PAD_LEFT);
+		//$this->logger->errorLogCaller(print_r($effectiveDate, 1));
+
+		// If there is no sexual identity we do not need to build a structure
+		if (!$so) {
+			return '';
+		}
+
+		$dob = $pd['DOB'];
+		$name_string = $pd['fname'] .' '. $pd['lname'] ." ($pid) $dob";
+		$sexualities = $this->getHL7SexualOrientation($so);
+
+		//$this->logger->errorLogCaller($name_string);
 		//$this->logger->errorLogCaller(print_r($so, 1));
 		//$this->logger->errorLogCaller(print_r($sexualities[$so], 1));
 
+		// https://cdasearch.hl7.org/examples/view/Guide%20Examples/Sexual%20Orientation%20Observation_2.16.840.1.113883.10.20.22.4.501
+		// According to the implementation guide this could be recorded differently 
+		// over time with an observation for each new "state".  The effectiveTime
+		// here is the date the participants sexuality was recorded.  For 
+		// records that were imported from the previouse medicaldb system,
+		// this value may not be correct
 		$entry = '<entry>
 				<!-- Sexual Orientation Observation -->
 				<observation classCode="OBS" moodCode="EVN">
@@ -460,7 +644,7 @@ class Bootstrap
 						codeSystem="2.16.840.1.113883.6.1" codeSystemName="LOINC"/>
 					<statusCode code="completed"/>
 					<effectiveTime>
-						<low value="201211"/>
+						<low value="'. $effectiveDate .'"/>
 					</effectiveTime>
 					<value xsi:type="CD" code="'. $sexualities[$so][1] .'" displayName="'. $sexualities[$so][0] .'"
 						codeSystem="2.16.840.1.113883.6.96" codeSystemName="SNOMED CT"/>
