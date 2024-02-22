@@ -122,64 +122,81 @@ class Bootstrap
 		</encounter>
 	  </entry>
 	*/
-    public function addSJIEncounters(ServiceSaveEvent $event)
-    {
-		$this->logger->debug(__FUNCTION__);
-
+	public function addSJIEncounters(ServiceSaveEvent $event) {
 		// loop across the C-CDA encounters and for each record of a visit
 		// find additional SJI encounters and add them
 
 		// For each encounter that we parse there should be 1 effectiveDate
-		// using that along with the pid should be able to get the visit id
-		// then each of the associated forms.  For each of those forms we will
-		// embed new diagnosis info from the different codes associated with
-		// each form
+		// using that along with the pid should be able to get the codes from
+		// SJI charting
 
-		// There is a mapping for this table: form_sji_counseling
-		// from provider type, counseling type, and duration
-
-		// This table would have it's own mapping too: form_sji_holistic
-
-		// Not all forms have codes associated with them, but these do
-		/*
-		| form_sji_medical_psychiatric_cpt_codes            |
-		| form_sji_medical_psychiatric_icd10_primary        |
-		| form_sji_medical_psychiatric_icd10_secondary      |
-		| form_sji_medical_psychiatric_icd9_primary         |
-		| form_sji_medical_psychiatric_icd9_secondary       |
-		| form_sji_medical_psychiatric_method_codes         |
-		| form_sji_medical_psychiatric_provider_type        |
-		| form_sji_medical_psychiatric_range_codes  
-		*/
-
-		// TODO: what is the CPT for intakes? This is how we need to
-		// code the intake forms
 		$CCDA = $event->getSaveData()['CCDA'];
 		$pid = $event->getSaveData()['pid'];
-		$trash;
+		$xmlDom = new DOMDocument();
+		$xmlDom->loadXML($CCDA);
 
 		foreach($xmlDom->getElementsByTagName('component') as $component) {
 		foreach($component->getElementsByTagName('section') as $section) {
 		foreach($section->getElementsByTagName('title') as $title) {
 			// $title is a DOMElement Object
 			// We expect the Social History section to already be built
+
 			if ($title->nodeValue === 'Encounters') {
 				$elements = $section->getElementsByTagName('text');
 				$text = $elements->item(0);
 
 			
 				foreach($section->getElementsByTagName('entry') as $entry) {
-					$elements = $section->getElementsByTagName('effectiveTime');
+					//$this->logger->errorLogCaller($xmlDom->saveXML($entry));
+					$elements = $entry->getElementsByTagName('effectiveTime');
 
 					// convert this to use as our lookup date
-					$effectiveTime = $elements->item(0);
+					$effectiveTime = $elements->item(0)->getAttribute('value');
+					$effectiveTime = date_parse($effectiveTime);
+					$effectiveTime = $effectiveTime['year'] .'-'.
+						str_pad($effectiveTime['month'], 2, 0, STR_PAD_LEFT) .'-'. 
+						str_pad($effectiveTime['day'], 2, 0, STR_PAD_LEFT);
+					/*
+					$this->logger->errorLogCaller(
+						'Looking up coding info for pid: '.
+						$pid .', date: '. print_r($effectiveTime,1));
+					*/
+					$coding = $this->getCoding($pid, $effectiveTime);
+					if (!$coding) { continue; }
+					foreach($coding as $code) {
+						//$this->logger->errorLogCaller(print_r($code, 1));
 
-					// TODO: Get range codes: 
-					// TODO: Get medical and psych ICD10 (prim & sec) codes: 
-					// TODO: Get medical and psych ICD9 (prim & sec) codes: 
-					// Get medical and psych CPT codes: 
-					// form_sji_medical_psychiatric
-					// form_sji_medical_psychiatric_cpt_codes
+						// If we have cpt codes then generate the entryRelationship xml
+						if(array_key_exists('cpt_codes', $code) && $code['cpt_codes']) {
+							if(!preg_match('/([0-9A-Z]{5})/', $code['cpt_codes'], $matches)) {
+								$this->logger->warning('Could not find CPT code: '.$code['cpt_codes']);
+								continue;
+							}
+							$codeID = $matches[1];
+							//$this->logger->errorLogCaller(print_r($code, 1));
+
+							$er = $xmlDom->createElement('entryRelationship');
+							$er->setAttribute('typeCode', 'REFR');
+							$er->setAttribute('inversionInd', 'false');
+
+							$act = $xmlDom->createElement('act');
+							$act->setAttribute('classCode', 'ACT');
+							$act->setAttribute('moodCode', 'ENV');
+
+							$er->appendChild($act);
+
+							$codeEl = $xmlDom->createElement('code');
+							$codeEl->setAttribute('code', $codeID);
+							$codeEl->setAttribute('codeSystemName', 'CPT-4');
+							$codeEl->setAttribute('codeSystem', '2.16.840.1.113883.6.12');
+							$codeEl->setAttribute('displayName', $code['cpt_codes']);
+
+							$act->appendChild($codeEl);
+
+							$section->appendChild($er);
+						}
+					}
+
 				}
 			}
 		}
@@ -187,22 +204,8 @@ class Bootstrap
 		}
 
 
-		$return = '<entry typeCode="DRIV">
-			<encounter classCode="ENC" moodCode="EVN">
-			  <templateId root="2.16.840.1.113883.10.20.22.4.49" extension="2015-08-01"/>
-			  <templateId root="2.16.840.1.113883.10.20.22.4.49"/>
-			  <id root="779b89a1-1376-0581-0482-7766f2f77e50" extension="ZGVmYXVsdDMzODM3Mw=="/>
-			  <code code="185347001" displayName="Office Visit | Testing custom forms" codeSystem="2.16.840.1.113883.6.96" codeSystemName="SNOMED CT">
-				<originalText>
-				  <reference value="#Encounter43"/>
-				</originalText>
-				<translation code="AMB" displayName="Ambulatory" codeSystem="2.16.840.1.113883.5.4" codeSystemName="ActCode"/>
-			  </code>
-			  <effectiveTime value="202203070000-0800"/>
-			  <performer> ...
-			  <participant typeCode="LOC"> ...
-			</encounter>
-		  </entry>';
+		$save = Array('pid' => $pid, 'CCDA' => $xmlDom->saveXML());
+		$event->setSaveData($save);
 		return $event;
 	}
 
@@ -227,6 +230,12 @@ class Bootstrap
 		//$this->logger->debug(__FUNCTION__);
 		$CCDA = $event->getSaveData()['CCDA'];
 		$pid = $event->getSaveData()['pid'];
+		$pd = array_merge(
+			$this->getPatientData($pid),
+			$this->getSexualOrientation($pid)
+		);
+		$dob = array_key_exists('DOB', $pd) ? ' '.$pd['DOB'] : '';
+		$name_string = $pd['fname'] .' '. $pd['lname'] ." ($pid)$dob";
 
 		$xmlDom = new DOMDocument();
 		$xmlDom->loadXML($CCDA);
@@ -246,23 +255,22 @@ class Bootstrap
 				$fragment = $xmlDom->createDocumentFragment();
 				$fragment->appendXml($stext);
 
-				$text = $section->getElementsByTagName('text')[0];
-				if (!$text) {
-					$this->logger->errorLogCaller(print_r($xmlDom->saveXML($section), 1));
-					break 3;
+				$elements = $section->getElementsByTagName('text');
+				$text = $elements->item(0);
+
+				$elements = $text->getElementsByTagName('table');
+				if (!$elements->count()) {
+					$this->logger->warning('Social History not built for: '.$name_string);
+					return $event;
 				}
 
-				$table = $text->getElementsByTagName('table')[0];
-				if (!$table) {
-					$this->logger->errorLogCaller(print_r($xmlDom->saveXML($text), 1));
-					break 3;
-				}
+				$table = $elements->item(0);
 
-				//$this->logger->errorLogCaller(print_r(get_class_methods($table), 1));
 				$table->appendChild($fragment);
 
 				// Insert the entry section for secual orientation
 				$entry = $this->getSexualOrientationEntry($pid);
+				//$this->logger->errorLogCaller(print_r($entry, 1));
 				$fragment = $xmlDom->createDocumentFragment();
 				$fragment->appendXml($entry);
 				$section->appendChild($fragment);
@@ -477,7 +485,7 @@ class Bootstrap
 			str_pad($effectiveDate['mon'], 2, 0, STR_PAD_LEFT) .'/'. 
 			str_pad($effectiveDate['mday'], 2, 0, STR_PAD_LEFT);
 
-		$dob = $pd['DOB'];
+		$dob = array_key_exists('DOB', $pd) ? $pd['DOB'] : '';
 		$name_string = $pd['fname'] .' '. $pd['lname'] ." ($pid) $dob";
 		$sexualities = $this->getHL7SexualOrientation($so);
 
@@ -783,13 +791,13 @@ class Bootstrap
 			return '';
 		}
 
-		$dob = $pd['DOB'];
+		$dob = array_key_exists('DOB', $pd) ? $pd['DOB'] : '';
 		$name_string = $pd['fname'] .' '. $pd['lname'] ." ($pid) $dob";
 		$sexualities = $this->getHL7SexualOrientation($so);
 
 		//$this->logger->errorLogCaller($name_string);
 		//$this->logger->errorLogCaller(print_r($so, 1));
-		//$this->logger->errorLogCaller(print_r($sexualities[$so], 1));
+		//$this->logger->errorLogCaller(print_r($sexualities[0], 1));
 
 		// https://cdasearch.hl7.org/examples/view/Guide%20Examples/Sexual%20Orientation%20Observation_2.16.840.1.113883.10.20.22.4.501
 		// According to the implementation guide this could be recorded differently 
@@ -797,6 +805,11 @@ class Bootstrap
 		// here is the date the participants sexuality was recorded.  For 
 		// records that were imported from the previouse medicaldb system,
 		// this value may not be correct
+
+
+		// We need to add in a new xsi type to support this
+		// https://stackoverflow.com/questions/9533034
+		// xsi:type="CD"
 		$entry = '<entry>
 				<!-- Sexual Orientation Observation -->
 				<observation classCode="OBS" moodCode="EVN">
@@ -811,17 +824,12 @@ class Bootstrap
 					<effectiveTime>
 						<low value="'. $effectiveDate .'"/>
 					</effectiveTime>
-					<value xsi:type="CD" code="'. $sexualities[$so][1] .'" displayName="'. $sexualities[$so][0] .'"
+					<value xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="urn:hl7-org:v3" xmlns:voc="urn:hl7-org:v3/voc" xmlns:sdtc="urn:hl7-org:sdtc" xsi:type="CD" code="'.  $sexualities[1] .'" '
+					.'displayName="'.  $sexualities[0] .'"
 						codeSystem="2.16.840.1.113883.6.96" codeSystemName="SNOMED CT"/>
 				</observation>
 			</entry>';
 
-/*
-		$xmlDom = new DOMDocument();
-		$xmlDom->loadXML($entry);
-		$elements = $xmlDom->getElementsByTagName('entry');
-		return $elements->item(0);
-*/
 		return $entry;
 	}
 
@@ -834,6 +842,117 @@ class Bootstrap
     {
         return $this->getPublicPath() . 'assets' . DIRECTORY_SEPARATOR;
     }
+
+	// Lookup the misc sji forms that assign coding to a visit
+	// There is a mapping for this table: form_sji_counseling
+	// from provider type, counseling type, and duration
+
+	// This table would have it's own mapping too: form_sji_holistic
+
+	// Not all forms have codes associated with them, but these do
+	/*
+	form_sji_medical_psychiatric_cpt_codes 
+	form_sji_medical_psychiatric_icd10_primary
+	form_sji_medical_psychiatric_icd9_primary
+	form_sji_medical_psychiatric_icd9_secondary
+	TODO: form_sji_medical_psychiatric_method_codes
+	TODO: form_sji_medical_psychiatric_provider_type
+	TODO: form_sji_medical_psychiatric_range_codes
+
+
+select 
+	form_sji_medical_psychiatric.id,
+	form_sji_medical_psychiatric.date,
+	form_sji_medical_psychiatric.pid,
+	user,provider_type,duration, 
+	cpt_codes, 
+	form_sji_medical_psychiatric_icd10_primary.icd_primary as icd10_primary, 
+	form_sji_medical_psychiatric_icd9_primary.icd_primary as icd9_primary, 
+	form_sji_medical_psychiatric_icd9_secondary.icd_secondary as icd9_secondary, 
+	from form_sji_medical_psychiatric 
+
+	left join form_sji_medical_psychiatric_cpt_codes on 
+		(form_sji_medical_psychiatric_cpt_codes.pid = 
+		form_sji_medical_psychiatric.id) 
+
+	left join form_sji_medical_psychiatric_icd10_primary on (
+		form_sji_medical_psychiatric_icd10_primary.pid = 
+		form_sji_medical_psychiatric.id) 
+
+	left join form_sji_medical_psychiatric_icd9_primary on (
+		form_sji_medical_psychiatric_icd9_primary.pid = 
+		form_sji_medical_psychiatric.id) 
+
+	left join form_sji_medical_psychiatric_icd9_secondary on (
+		form_sji_medical_psychiatric_icd9_secondary.pid = 
+		form_sji_medical_psychiatric.id) 
+
+	where form_sji_medical_psychiatric.pid=? 
+	and datediff(form_sji_medical_psychiatric.date,?)=0
+
+
+	select 
+		form_sji_medical_psychiatric_icd9_primary.icd_primary as icd9_primary,
+		form_sji_medical_psychiatric.id,date,form_sji_medical_psychiatric.pid,
+		user,provider_type,duration,
+		cpt_codes,
+		form_sji_medical_psychiatric_icd10_primary.icd_primary 
+
+		from form_sji_medical_psychiatric 
+
+		left join form_sji_medical_psychiatric_cpt_codes on (
+			form_sji_medical_psychiatric_cpt_codes.pid = 
+			form_sji_medical_psychiatric.id) 
+
+		left join form_sji_medical_psychiatric_icd10_primary on (
+			form_sji_medical_psychiatric_icd10_primary.pid = 
+			form_sji_medical_psychiatric.id) 
+
+		left join form_sji_medical_psychiatric_icd9_primary on (
+			form_sji_medical_psychiatric_icd9_primary.pid = 
+			form_sji_medical_psychiatric.id) limit 10;
+
+	*/
+	// TODO: code the intake forms
+	private function getCoding($pid, $date) {
+		$query = 'select '.
+			'form_sji_medical_psychiatric.id,'.
+			'form_sji_medical_psychiatric.date,'.
+			'form_sji_medical_psychiatric.pid,'.
+			'user,provider_type,duration, '.
+			'cpt_codes, '.
+			'form_sji_medical_psychiatric_icd10_primary.icd_primary as '.
+			'icd10_primary, '.
+			'form_sji_medical_psychiatric_icd9_primary.icd_primary as '.
+			'icd9_primary, '.
+			'form_sji_medical_psychiatric_icd9_secondary.icd_secondary as '.
+			'icd9_secondary '.
+			'from form_sji_medical_psychiatric '.
+			'left join form_sji_medical_psychiatric_cpt_codes on '.
+			'(form_sji_medical_psychiatric_cpt_codes.pid = '.
+			'form_sji_medical_psychiatric.id) '.
+			'left join form_sji_medical_psychiatric_icd10_primary '.
+			'on (form_sji_medical_psychiatric_icd10_primary.pid = '.
+			'form_sji_medical_psychiatric.id) '.
+			'left join form_sji_medical_psychiatric_icd9_primary '.
+			'on (form_sji_medical_psychiatric_icd9_primary.pid = '.
+			'form_sji_medical_psychiatric.id) '.
+			'left join form_sji_medical_psychiatric_icd9_secondary '.
+			'on (form_sji_medical_psychiatric_icd9_secondary.pid = '.
+			'form_sji_medical_psychiatric.id) '.
+			'where form_sji_medical_psychiatric.pid=? '.
+			'and datediff(form_sji_medical_psychiatric.date,?)=0';
+
+		//$this->logger->errorLogCaller(print_r($query, 1));
+        $ary = array($pid, $date);
+		$return = array();
+        $result = sqlStatement($query, $ary);
+		foreach ($result as $row) {
+			$return[] = $row;
+			//$this->logger->errorLogCaller(print_r($row, 1));
+		}
+		return $return;
+	}
 
     public function getTemplatePath()
     {
