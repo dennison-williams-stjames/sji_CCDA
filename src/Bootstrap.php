@@ -103,9 +103,106 @@ class Bootstrap
 
 	// None of the custom forms are getting recorded as encounters in the C-CDA
     // we will have to add them here
+	/*
+
+	  <entry typeCode="DRIV">
+		<encounter classCode="ENC" moodCode="EVN">
+		  <templateId root="2.16.840.1.113883.10.20.22.4.49" extension="2015-08-01"/>
+		  <templateId root="2.16.840.1.113883.10.20.22.4.49"/>
+		  <id root="779b89a1-1376-0581-0482-7766f2f77e50" extension="ZGVmYXVsdDMzODM3Mw=="/>
+		  <code code="185347001" displayName="Office Visit | Testing custom forms" codeSystem="2.16.840.1.113883.6.96" codeSystemName="SNOMED CT">
+			<originalText>
+			  <reference value="#Encounter43"/>
+			</originalText>
+			<translation code="AMB" displayName="Ambulatory" codeSystem="2.16.840.1.113883.5.4" codeSystemName="ActCode"/>
+		  </code>
+		  <effectiveTime value="202203070000-0800"/>
+		  <performer> ...
+		  <participant typeCode="LOC"> ...
+		</encounter>
+	  </entry>
+	*/
     public function addSJIEncounters(ServiceSaveEvent $event)
     {
 		$this->logger->debug(__FUNCTION__);
+
+		// loop across the C-CDA encounters and for each record of a visit
+		// find additional SJI encounters and add them
+
+		// For each encounter that we parse there should be 1 effectiveDate
+		// using that along with the pid should be able to get the visit id
+		// then each of the associated forms.  For each of those forms we will
+		// embed new diagnosis info from the different codes associated with
+		// each form
+
+		// There is a mapping for this table: form_sji_counseling
+		// from provider type, counseling type, and duration
+
+		// This table would have it's own mapping too: form_sji_holistic
+
+		// Not all forms have codes associated with them, but these do
+		/*
+		| form_sji_medical_psychiatric_cpt_codes            |
+		| form_sji_medical_psychiatric_icd10_primary        |
+		| form_sji_medical_psychiatric_icd10_secondary      |
+		| form_sji_medical_psychiatric_icd9_primary         |
+		| form_sji_medical_psychiatric_icd9_secondary       |
+		| form_sji_medical_psychiatric_method_codes         |
+		| form_sji_medical_psychiatric_provider_type        |
+		| form_sji_medical_psychiatric_range_codes  
+		*/
+
+		// TODO: what is the CPT for intakes? This is how we need to
+		// code the intake forms
+		$CCDA = $event->getSaveData()['CCDA'];
+		$pid = $event->getSaveData()['pid'];
+		$trash;
+
+		foreach($xmlDom->getElementsByTagName('component') as $component) {
+		foreach($component->getElementsByTagName('section') as $section) {
+		foreach($section->getElementsByTagName('title') as $title) {
+			// $title is a DOMElement Object
+			// We expect the Social History section to already be built
+			if ($title->nodeValue === 'Encounters') {
+				$elements = $section->getElementsByTagName('text');
+				$text = $elements->item(0);
+
+			
+				foreach($section->getElementsByTagName('entry') as $entry) {
+					$elements = $section->getElementsByTagName('effectiveTime');
+
+					// convert this to use as our lookup date
+					$effectiveTime = $elements->item(0);
+
+					// TODO: Get range codes: 
+					// TODO: Get medical and psych ICD10 (prim & sec) codes: 
+					// TODO: Get medical and psych ICD9 (prim & sec) codes: 
+					// Get medical and psych CPT codes: 
+					// form_sji_medical_psychiatric
+					// form_sji_medical_psychiatric_cpt_codes
+				}
+			}
+		}
+		}
+		}
+
+
+		$return = '<entry typeCode="DRIV">
+			<encounter classCode="ENC" moodCode="EVN">
+			  <templateId root="2.16.840.1.113883.10.20.22.4.49" extension="2015-08-01"/>
+			  <templateId root="2.16.840.1.113883.10.20.22.4.49"/>
+			  <id root="779b89a1-1376-0581-0482-7766f2f77e50" extension="ZGVmYXVsdDMzODM3Mw=="/>
+			  <code code="185347001" displayName="Office Visit | Testing custom forms" codeSystem="2.16.840.1.113883.6.96" codeSystemName="SNOMED CT">
+				<originalText>
+				  <reference value="#Encounter43"/>
+				</originalText>
+				<translation code="AMB" displayName="Ambulatory" codeSystem="2.16.840.1.113883.5.4" codeSystemName="ActCode"/>
+			  </code>
+			  <effectiveTime value="202203070000-0800"/>
+			  <performer> ...
+			  <participant typeCode="LOC"> ...
+			</encounter>
+		  </entry>';
 		return $event;
 	}
 
@@ -209,34 +306,36 @@ class Bootstrap
 				$elements = $section->getElementsByTagName('text');
 				$text = $elements->item(0);
 
-				$elements = $text->getElementsByTagName('tbody');
+				$elements = $text->getElementsByTagName('table');
 				if (!$elements->count()) {
 					$this->logger->warning('Social History not built for: '.$name_string);
 					return $event;
 				}
 
-				$tbody = $elements->item(0);
+				$table = $elements->item(0);
 				//$this->logger->errorLogCaller(print_r(get_class_methods($tbody), 1)); return $event;
 
 				//determine the most recent id
-				$socialId = $this->getSocialId($tbody);
+				$socialId = $this->getSocialId($table);
 
 				// Insert sex assigned at birth
-				$tr = $xmlDom->createElement('TR');
-				$td = $xmlDom->createElement('TD');
+				$tbody = $xmlDom->createElement('tbody');
+				$tr = $xmlDom->createElement('tr');
+				$td = $xmlDom->createElement('td');
 				$td->setAttribute('ID', $socialId);
 				$td->nodeValue = 'Birth Sex';
 				$tr->appendChild($td);
 
-				$td = $xmlDom->createElement('TD');
+				$td = $xmlDom->createElement('td');
 				$td->nodeValue = $sex;
 				$tr->appendChild($td);
 
-				$td = $xmlDom->createElement('TD');
+				$td = $xmlDom->createElement('td');
 				$td->nodeValue = $dob;
 				$tr->appendChild($td);
 
 				$tbody->appendChild($tr);
+				$table->appendChild($tbody);
 				//$this->logger->errorLogCaller('TBODY: '. print_r($xmlDom->saveXML($tbody), 1));
 
 				// TODO: Insert sexual orientation
@@ -267,9 +366,75 @@ class Bootstrap
 	    return $event;
 	}
 
+	/*
+	 * Given ___ pull the provider name and NPI
+     * return a string representing a performer section
+
+	 <performer>
+		<assignedEntity>
+		  <id root="2.16.840.1.113883.4.6" extension="<NPI>"/>
+		  <code nullFlavor="UNK"/>
+		  <assignedPerson>
+			<name>
+			  <family><PROVIDER_LNAME></family>
+			  <given><PROVIDER_FNAME></given>
+			</name>
+		  </assignedPerson>
+		</assignedEntity>
+	  </performer>
+	*/
+	private function getPerformer() {
+		$npi = 1;
+        $fname = 'Charles';
+        $lname = 'Cloniger';
+	    $return = '<performer>
+		<assignedEntity>
+		  <id root="2.16.840.1.113883.4.6" extension="'. $npi .'"/>
+		  <code nullFlavor="UNK"/>
+		  <assignedPerson>
+			<name>
+			  <family>'. $lname .'</family>
+			  <given>'. $fname .'</given>
+			</name>
+		  </assignedPerson>
+		</assignedEntity>
+	    </performer>';
+		return $return;
+	}
+
+	/*
+     * Not to be confused with participant that receives care, this
+	 * is a vocabulary word from C-CDA
+
+	  <participant typeCode="LOC">
+		<participantRole classCode="SDLOC">
+		  <templateId root="2.16.840.1.113883.10.20.22.4.32"/>
+		  <code code="1160-1" displayName=",730 Polk St,San Francisco,CA 94109" codeSystem="2.16.840.1.113883.6.259" codeSystemName="HealthcareServiceLocation"/>
+		  <addr>
+			<streetAddressLine>730 Polk St</streetAddressLine>
+			<city>San Francisco</city>
+			<state>CA</state>
+			<postalCode>94109</postalCode>
+			<country>USA</country>
+		  </addr>
+		  <telecom value="tel:4155548494" use="WP"/>
+		  <playingEntity classCode="PLC">
+			<name>Polk St</name>
+		  </playingEntity>
+		</participantRole>
+	  </participant>
+	*/
+	private function getParticipant() {
+		return '';
+	}
+
 	private function getSocialId($node) {
 		$ct = 1;
 		$socialId = 'social'.$ct;
+		if (!$node) {
+			return $socialId;
+		}
+
 		foreach($node->getElementsByTagName('td') as $td) {
 			$value = $td->getAttribute('ID');
 			if ($value) {
