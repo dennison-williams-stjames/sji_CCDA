@@ -260,8 +260,21 @@ class Bootstrap
 
 				$elements = $text->getElementsByTagName('table');
 				if (!$elements->count()) {
-					$this->logger->warning('Social History not built for: '.$name_string);
-					return $event;
+					$this->logger->errorLogCaller('Social History not built for: '.$name_string);
+
+					$sh_text = $this->getNewSocialHistoryText();
+					//$this->logger->debug(print_r($sh_text, 1));
+					$fragment = $xmlDom->createDocumentFragment();
+					$fragment->appendXml($sh_text);
+					$section->replaceChild($fragment, $text);
+					$elements = $section->getElementsByTagName('text');
+					$text = $elements->item(0);
+					$elements = $text->getElementsByTagName('table');
+					if (!$elements->count()) {
+						$this->logger->errorLogCaller('Social History not buildable: '.
+							$name_string);
+						return $event;
+					}
 				}
 
 				$table = $elements->item(0);
@@ -314,10 +327,25 @@ class Bootstrap
 				$elements = $section->getElementsByTagName('text');
 				$text = $elements->item(0);
 
+				//$this->logger->errorLogCaller(print_r($text->nodeValue, 1));
 				$elements = $text->getElementsByTagName('table');
-				if (!$elements->count()) {
-					$this->logger->warning('Social History not built for: '.$name_string);
-					return $event;
+				if (!$elements->count() || 
+					$text->nodeValue === 'Not Available') {
+					$this->logger->errorLogCaller('Social History not built for: '.$name_string);
+					$sh_text = $this->getNewSocialHistoryText();
+					//$this->logger->errorLogCaller($sh_text);
+					$fragment = $xmlDom->createDocumentFragment();
+					$fragment->appendXml($sh_text);
+					$section->replaceChild($fragment, $text);
+					//$this->logger->errorLogCaller(print_r($result->nodeValue, 1));
+					$elements = $section->getElementsByTagName('text');
+					$text = $elements->item(0);
+					$elements = $text->getElementsByTagName('table');
+					if (!$elements->count()) {
+						$this->logger->errorLogCaller('Social History not buildable: '.
+							$name_string);
+						return $event;
+					}
 				}
 
 				$table = $elements->item(0);
@@ -436,6 +464,37 @@ class Bootstrap
 		return '';
 	}
 
+	/*
+	  <text>
+		<table width="100%" border="1">
+		  <thead>
+			<tr>
+			  <th>Social History Element</th>
+			  <th>Description</th>
+			  <th>Effective Dates</th>
+			</tr>
+		  </thead>
+		  <tbody>
+		  </tbody>
+		</table>
+	  </text>
+	*/
+	private function getNewSocialHistoryText() {
+		return '<text>
+		<table width="100%" border="1">
+		  <thead>
+			<tr>
+			  <th>Social History Element</th>
+			  <th>Description</th>
+			  <th>Effective Dates</th>
+			</tr>
+		  </thead>
+		  <tbody>
+		  </tbody>
+		</table>
+	  </text>';
+	}
+
 	private function getSocialId($node) {
 		$ct = 1;
 		$socialId = 'social'.$ct;
@@ -461,7 +520,7 @@ class Bootstrap
 			"select max(id) from form_sji_intake_core_variables ".
 			"where pid=?)";
 		$result = sqlQuery($sql, array($pid, $pid));
-		return $result;
+		return $result?$result:array();
 	}
 
 	/*
@@ -495,9 +554,22 @@ class Bootstrap
 					<content ID="_3b8a5051-3968-4cfe-ab70-8b69f84bd378">Sexual orientation</content>
 				</td>
 				<td>
-					<content ID="_12d30bb3-f589-4d3b-a011-4b463aafa093">'.
-					$sexualities[0]
-                    .'</content>
+					<content ID="_12d30bb3-f589-4d3b-a011-4b463aafa093">';
+
+		if (
+			$sexualities && 
+			is_array($sexualities) && 
+			array_key_exists(0, $sexualities)
+		   ) 
+		{
+			$return .= $sexualities[0];
+		} else {
+			$this->logger->errorLogCaller('Did not get expected sexuality '.
+				print_r($sexualities, 1));
+			return '';
+		}
+
+        $return .= '</content>
 				</td>
 				<td>
 					<content>'. $effectiveDate .' - </content>
