@@ -90,7 +90,28 @@ class Bootstrap
 			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'addSJIEncounters']
 		);
 
-/*
+		/*
+		 * FIX: cvc-complex-type.2.4.a: Invalid content was found starting with 
+		 * element 'sdtc:raceCode'. One of '{"urn:hl7-org:v3":ethnicGroupCode, 
+		 * "urn:hl7-org:v3":guardian, "urn:hl7-org:v3":birthplace, 
+		 * "urn:hl7-org:v3":languageCommunication}' is expected.
+		 *
+		 * This should not be needed if the xml is validated against
+		 * CDA_SDTC (CDA XML Schema with SDTC Approved Extensions)
+        $this->eventDispatcher->addListener( 
+			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'fixSdtcRaceCode']
+		);
+		 */
+
+		/*
+		 * FIX: cvc-complex-type.2.4.b: The content of element 'tbody' is 
+		 * not complete. One of '{"urn:hl7-org:v3":tr}' is expected.
+		 */
+        $this->eventDispatcher->addListener( 
+			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'fixEmptyTbody']
+		);
+
+		/*
         $this->eventDispatcher->addListener( 
 			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'addGenderIdentity']
 		);
@@ -98,8 +119,69 @@ class Bootstrap
         $this->eventDispatcher->addListener( 
 			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'addScannedDocuments']
 		);
-*/
-    }
+		*/
+	}
+
+	/*
+	 * FIX: cvc-complex-type.2.4.b: The content of element 'tbody' is 
+	 * not complete. One of '{"urn:hl7-org:v3":tr}' is expected.
+	 *
+	 * There are some sections in the resulting xml with empty tbody
+	 * tags which need to contain at least:
+	 * <tbody><tr><td /></tr></tbody>
+	 */
+	public function fixEmptyTbody(ServiceSaveEvent $event) {
+		$CCDA = $event->getSaveData()['CCDA'];
+		$pid = $event->getSaveData()['pid'];
+		$xmlDom = new DOMDocument();
+		$xmlDom->loadXML($CCDA);
+
+		// There should only be one sdtc:raceCode
+		foreach($xmlDom->getElementsByTagName('tbody') as $tbody) {
+			if ($tbody->childNodes->length === 0) {
+				$tr = $xmlDom->createElement('tr');
+				$td = $xmlDom->createElement('td');
+				$tr->appendChild($td);
+				$tbody->appendChild($tr);
+			}
+		}
+
+		$save = Array(
+			'pid' => $pid, 
+			'CCDA' => str_replace(PHP_EOL, '', $xmlDom->saveXML())
+		);
+		$event->setSaveData($save);
+		return $event;
+	}
+
+	/*
+	 * FIX: cvc-complex-type.2.4.a: Invalid content was found starting with 
+	 * element 'sdtc:raceCode'. One of '{"urn:hl7-org:v3":ethnicGroupCode, 
+	 * "urn:hl7-org:v3":guardian, "urn:hl7-org:v3":birthplace, 
+	 * "urn:hl7-org:v3":languageCommunication}' is expected.
+	 *
+	 * OEMR is not building out the requirements for using the sdtc:racCode 
+	 * tag as expected, so we are just going to remove it
+	 */
+	public function fixSdtcRaceCode(ServiceSaveEvent $event) {
+		$CCDA = $event->getSaveData()['CCDA'];
+		$pid = $event->getSaveData()['pid'];
+		$xmlDom = new DOMDocument();
+		$xmlDom->loadXML($CCDA);
+
+		// There should only be one sdtc:raceCode
+		foreach($xmlDom->getElementsByTagNameNS('urn:hl7-org:sdtc', 'raceCode') as $sdtcRaceCode) {
+			//$this->logger->errorLogCaller('Trying to remove racecode');
+			$sdtcRaceCode->remove();
+		}
+
+		$save = Array(
+			'pid' => $pid, 
+			'CCDA' => str_replace(PHP_EOL, '', $xmlDom->saveXML())
+		);
+		$event->setSaveData($save);
+		return $event;
+	}
 
 	// None of the custom forms are getting recorded as encounters in the C-CDA
     // we will have to add them here
@@ -147,7 +229,6 @@ class Bootstrap
 
 			
 				foreach($section->getElementsByTagName('entry') as $entry) {
-					//$this->logger->errorLogCaller($xmlDom->saveXML($entry));
 					$elements = $entry->getElementsByTagName('effectiveTime');
 
 					// convert this to use as our lookup date
@@ -204,7 +285,10 @@ class Bootstrap
 		}
 
 
-		$save = Array('pid' => $pid, 'CCDA' => $xmlDom->saveXML());
+		$save = Array(
+			'pid' => $pid, 
+			'CCDA' => str_replace(PHP_EOL, '', $xmlDom->saveXML())
+		);
 		$event->setSaveData($save);
 		return $event;
 	}
@@ -260,8 +344,6 @@ class Bootstrap
 
 				$elements = $text->getElementsByTagName('table');
 				if (!$elements->count()) {
-					$this->logger->errorLogCaller('Social History not built for: '.$name_string);
-
 					$sh_text = $this->getNewSocialHistoryText();
 					//$this->logger->debug(print_r($sh_text, 1));
 					$fragment = $xmlDom->createDocumentFragment();
@@ -277,10 +359,6 @@ class Bootstrap
 					}
 				}
 
-				$table = $elements->item(0);
-
-				$table->appendChild($fragment);
-
 				// Insert the entry section for secual orientation
 				$entry = $this->getSexualOrientationEntry($pid);
 				//$this->logger->errorLogCaller(print_r($entry, 1));
@@ -293,7 +371,10 @@ class Bootstrap
 		}
 		}
 
-		$save = Array('pid' => $pid, 'CCDA' => $xmlDom->saveXML());
+		$save = Array(
+			'pid' => $pid, 
+			'CCDA' => str_replace(PHP_EOL, '', $xmlDom->saveXML())
+		);
 		$event->setSaveData($save);
 		return $event;
 	}
@@ -331,7 +412,6 @@ class Bootstrap
 				$elements = $text->getElementsByTagName('table');
 				if (!$elements->count() || 
 					$text->nodeValue === 'Not Available') {
-					$this->logger->errorLogCaller('Social History not built for: '.$name_string);
 					$sh_text = $this->getNewSocialHistoryText();
 					//$this->logger->errorLogCaller($sh_text);
 					$fragment = $xmlDom->createDocumentFragment();
@@ -372,10 +452,7 @@ class Bootstrap
 
 				$tbody->appendChild($tr);
 				$table->appendChild($tbody);
-				//$this->logger->errorLogCaller('TBODY: '. print_r($xmlDom->saveXML($tbody), 1));
 
-				// TODO: Insert sexual orientation
-				// TODO: Insert gender identity
 				break 3;
 			}
 			//exit;
@@ -383,21 +460,11 @@ class Bootstrap
 		} // section
 		} // component
 		
-		// This is an example of how we can embed ourselves in the xml
-		/*
-		if (substr_count($content, '</ClinicalDocument>') == 2) {
-            $d = explode('</ClinicalDocument>', $content);
-            $content = $d[0] . '</ClinicalDocument>';
-            $unstructured = $d[1] . '</ClinicalDocument>';
-        }
-		*/
-		$save = Array('pid' => $pid, 'CCDA' => $xmlDom->saveXML());
+		$save = Array(
+			'pid' => $pid, 
+			'CCDA' => str_replace(PHP_EOL, '', $xmlDom->saveXML())
+		);
 		$event->setSaveData($save);
-
-		// TODO: sexual preference
-		// TODO: gender identity
-		// TODO: all visits and encounters
-		// TODO: all groups
 
 	    return $event;
 	}
@@ -475,6 +542,7 @@ class Bootstrap
 			</tr>
 		  </thead>
 		  <tbody>
+		    <tr />
 		  </tbody>
 		</table>
 	  </text>
@@ -490,6 +558,7 @@ class Bootstrap
 			</tr>
 		  </thead>
 		  <tbody>
+            <tr><td></td><td></td><td></td></tr>
 		  </tbody>
 		</table>
 	  </text>';
@@ -564,8 +633,10 @@ class Bootstrap
 		{
 			$return .= $sexualities[0];
 		} else {
-			$this->logger->errorLogCaller('Did not get expected sexuality '.
-				print_r($sexualities, 1));
+			$this->logger->errorLogCaller('Did not get expected sexuality -'.
+					$so .'- => '.
+					print_r($sexualities, 1)
+			);
 			return '';
 		}
 
@@ -798,11 +869,11 @@ class Bootstrap
 				array("Bisexual","20430005"), 
 			"Other - unspecified" => 
 				array("other","OTH"), 
-			"Gay Male" => "",
+			"Gay Male" => 
 				array("Gay or lesbian","38628009"), 
 			"Queer" => 
 				array("other","OTH"), 
-			"Do Not Know" => "",
+			"Do Not Know" => 
 				array("unknown","UKN"), 
 			"Other (specify)" => 
 				array("other","OTH"), 
@@ -820,7 +891,7 @@ class Bootstrap
 				array("unknown","UKN"), 
 			"Hetero" => 
 				array("Straight (not gay or lesbian)","20430005"), 
-			"NULL" => "",
+			"NULL" => 
 				array("unknown","UKN"), 
 			"Heterosexual" => 
 				array("Straight (not gay or lesbian)","20430005"), 
