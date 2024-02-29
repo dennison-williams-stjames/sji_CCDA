@@ -111,6 +111,22 @@ class Bootstrap
 			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'fixEmptyTbody']
 		);
 
+        $this->eventDispatcher->addListener( 
+			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'fixInvalidDate']
+		);
+
+        $this->eventDispatcher->addListener( 
+			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'fixBrokenAuthor']
+		);
+
+        $this->eventDispatcher->addListener( 
+			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'fixEmptyComponent']
+		);
+
+        $this->eventDispatcher->addListener( 
+			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'fixMissingProviderNPI']
+		);
+
 		/*
         $this->eventDispatcher->addListener( 
 			ServiceSaveEvent::EVENT_PRE_SAVE, [$this, 'addGenderIdentity']
@@ -183,6 +199,140 @@ class Bootstrap
 		return $event;
 	}
 
+	/*
+		cvc-pattern-valid: Value 'Invalid date' is not facet-valid with 
+		respect to pattern 
+		'[0-9]{1,8}|([0-9]{9,14}|[0-9]{14,14}\.[0-9]+)([+\-][0-9]{1,4})?' 
+		for type 'ts'.
+
+		cvc-attribute.3: The value 'Invalid date' of attribute 'value' on 
+		element 'time' is not valid with respect to its type, 'ts'.
+
+		This issue comes up in the Patient Care Teams section
+	*/
+	public function fixInvalidDate(ServiceSaveEvent $event) {
+		$CCDA = $event->getSaveData()['CCDA'];
+		$pid = $event->getSaveData()['pid'];
+		$xmlDom = new DOMDocument();
+		$xmlDom->loadXML($CCDA);
+
+		// There should only be one sdtc:raceCode
+		foreach($xmlDom->getElementsByTagName('time') as $time) {
+			if ($time->getAttribute('value') === 'Invalid date') {
+				$time->remove();
+			}
+		}
+
+		$save = Array(
+			'pid' => $pid, 
+			'CCDA' => str_replace(PHP_EOL, '', $xmlDom->saveXML())
+		);
+		$event->setSaveData($save);
+		return $event;
+	}
+
+	/*
+	 * cvc-complex-type.2.4.a: Invalid content was found starting 
+	 * with element 'assignedAuthor'. One of '{"urn:hl7-org:v3":templateId, 
+	 * "urn:hl7-org:v3":functionCode, "urn:hl7-org:v3":time}' is expected.
+	 *
+	 * It seems there are times when an invalid <author> entry is generated
+	 */
+	public function fixBrokenAuthor(ServiceSaveEvent $event) {
+		$CCDA = $event->getSaveData()['CCDA'];
+		$pid = $event->getSaveData()['pid'];
+		$xmlDom = new DOMDocument();
+		$xmlDom->loadXML($CCDA);
+
+		foreach($xmlDom->getElementsByTagName('author') as $author) {
+			$elements = $author->getElementsByTagName('time');
+			if ($elements->length == 0) {
+				$author->remove();
+			}
+		}
+
+		$save = Array(
+			'pid' => $pid, 
+			'CCDA' => str_replace(PHP_EOL, '', $xmlDom->saveXML())
+		);
+		$event->setSaveData($save);
+		return $event;
+	}
+
+	/*
+	 * cvc-minLength-valid: Value '' with length = '0' is not 
+	 * facet-valid with respect to minLength '1' for type 'st'.
+	 *
+	 * cvc-attribute.3: The value '' of attribute 'extension' on 
+	 * element 'id' is not valid with respect to its type, 'st'.
+	 *
+	 *  This seems to be happening in the encounters list
+	 */
+
+	/*
+	 * cvc-complex-type.2.4.a: Invalid content was found starting with 
+	 * element 'entryRelationship'. One of '{"urn:hl7-org:v3":entry, 
+	 * "urn:hl7-org:v3":component}' is expected.
+	 *
+	 *  It seems we get empty components sometimes
+	 */
+	public function fixEmptyComponent(ServiceSaveEvent $event) {
+		$CCDA = $event->getSaveData()['CCDA'];
+		$pid = $event->getSaveData()['pid'];
+		$xmlDom = new DOMDocument();
+		$xmlDom->loadXML($CCDA);
+
+		foreach($xmlDom->getElementsByTagName('component') as $component) {
+			if ($component->childNodes->length == 0) {
+				$component->remove();
+			}
+		}
+
+		$save = Array(
+			'pid' => $pid, 
+			'CCDA' => str_replace(PHP_EOL, '', $xmlDom->saveXML())
+		);
+		$event->setSaveData($save);
+		return $event;
+	}
+
+	/*
+	 * cvc-complex-type.2.4.a: Invalid content was found starting with 
+	 * element 'entryRelationship'. One of '{"urn:hl7-org:v3":entry, 
+	 * "urn:hl7-org:v3":component}' is expected.
+	 *
+	 * This happens whenever one of our providers without an NPI is
+	 * referenced
+	 */
+	public function fixMissingProviderNPI(ServiceSaveEvent $event) {
+		$CCDA = $event->getSaveData()['CCDA'];
+		$pid = $event->getSaveData()['pid'];
+		$xmlDom = new DOMDocument();
+		$xmlDom->loadXML($CCDA);
+
+		foreach($xmlDom->getElementsByTagName('assignedEntity') as $ae) {
+			$id = $ae->getElementsByTagName('id')[0];
+			if (strlen($id->getAttribute('extension')) === 0) {
+				$id->removeAttribute('extension');
+			}
+		}
+
+		$save = Array(
+			'pid' => $pid, 
+			'CCDA' => str_replace(PHP_EOL, '', $xmlDom->saveXML())
+		);
+		$event->setSaveData($save);
+		return $event;
+	}
+
+	/*
+	 * cvc-complex-type.2.4.a: Invalid content was found starting with 
+	 * element 'entryRelationship'. One of '{"urn:hl7-org:v3":entry, 
+	 * "urn:hl7-org:v3":component}' is expected.
+	 *
+	 *
+	 */
+
 	// None of the custom forms are getting recorded as encounters in the C-CDA
     // we will have to add them here
 	/*
@@ -229,20 +379,48 @@ class Bootstrap
 
 			
 				foreach($section->getElementsByTagName('entry') as $entry) {
-					$elements = $entry->getElementsByTagName('effectiveTime');
+					$encounter = $entry->getElementsByTagName('encounter')[0];
+
+					// Get the enounter reference value so that we can update the 
+					// Diagnosis/Complaint column
+					$originalText = $encounter->getElementsByTagName('originalText')[0];
+					//$this->logger->errorLogCaller('originalText : '.  print_r($origionalText, 1));
+					$reference = $originalText->getElementsByTagName('reference')[0];
+					$reference = $reference->getAttribute('value');
+
+
+					// get the td node we will be updating
+					$td = '';
+					$found = 0;
+					foreach($text->getElementsByTagName('td') as $td) {
+						if ('#'.$td->getAttribute('ID') === $reference) {
+							$found = 1;
+							$tr = $td->parentNode;
+							$td = $tr->lastElementChild;
+							break;
+						}
+
+					}
+
+					if (!$found) {
+						$td = '';
+					} 
 
 					// convert this to use as our lookup date
+					$elements = $encounter->getElementsByTagName('effectiveTime');
 					$effectiveTime = $elements->item(0)->getAttribute('value');
 					$effectiveTime = date_parse($effectiveTime);
 					$effectiveTime = $effectiveTime['year'] .'-'.
 						str_pad($effectiveTime['month'], 2, 0, STR_PAD_LEFT) .'-'. 
 						str_pad($effectiveTime['day'], 2, 0, STR_PAD_LEFT);
+
+					$coding = $this->getCoding($pid, $effectiveTime);
 					/*
 					$this->logger->errorLogCaller(
 						'Looking up coding info for pid: '.
 						$pid .', date: '. print_r($effectiveTime,1));
-					*/
-					$coding = $this->getCoding($pid, $effectiveTime);
+					$this->logger->errorLogCaller(print_r($coding, 1));
+					 */
 					if (!$coding) { continue; }
 					foreach($coding as $code) {
 						//$this->logger->errorLogCaller(print_r($code, 1));
@@ -254,15 +432,17 @@ class Bootstrap
 								continue;
 							}
 							$codeID = $matches[1];
-							//$this->logger->errorLogCaller(print_r($code, 1));
+							//$this->logger->errorLogCaller(print_r($codeID, 1) .' '. $pid .' '. $effectiveTime);
 
 							$er = $xmlDom->createElement('entryRelationship');
 							$er->setAttribute('typeCode', 'REFR');
 							$er->setAttribute('inversionInd', 'false');
 
+							// definition for act element: 
+							// https://terminology.hl7.org/5.2.0/ValueSet-v3-xDocumentActMood.html
 							$act = $xmlDom->createElement('act');
 							$act->setAttribute('classCode', 'ACT');
-							$act->setAttribute('moodCode', 'ENV');
+							$act->setAttribute('moodCode', 'EVN');
 
 							$er->appendChild($act);
 
@@ -272,9 +452,21 @@ class Bootstrap
 							$codeEl->setAttribute('codeSystem', '2.16.840.1.113883.6.12');
 							$codeEl->setAttribute('displayName', $code['cpt_codes']);
 
+							if ($td->nodeValue === 'No Data Available') {
+								$td->nodeValue = '';
+							}
+
+							if ($td->nodeValue) {
+								$td->nodeValue .= ', ';
+							}
+
+							if ($found && !is_string($td)) {
+								$td->nodeValue .= $code['cpt_codes'];
+							}
+
 							$act->appendChild($codeEl);
 
-							$section->appendChild($er);
+							$encounter->appendChild($er);
 						}
 					}
 
